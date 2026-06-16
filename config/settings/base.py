@@ -87,6 +87,14 @@ DATABASES = {
     }
 }
 
+# PBKDF2 stays the default for new/changed passwords; bcrypt is required to verify
+# the hashes imported verbatim from Supabase auth.users (plain bcrypt, $2a$ prefix).
+# On first login Django transparently re-hashes those users to PBKDF2.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.BCryptPasswordHasher",
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},

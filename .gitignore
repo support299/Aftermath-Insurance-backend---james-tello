@@ -10,3 +10,4 @@ venv/
 staticfiles/
 media/
 .DS_Store
+auth_users_export.csv
