@@ -27,6 +27,7 @@ class Sale(models.Model):
     team_name = models.TextField(null=True, blank=True)
     sale_date = models.DateTimeField(default=timezone.now)
     customer_name = models.TextField(null=True, blank=True)
+    ghl_contact_id = models.TextField(null=True, blank=True)
     deal_size = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     carrier = models.TextField()
     product = models.TextField()

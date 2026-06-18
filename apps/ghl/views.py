@@ -174,28 +174,34 @@ class UpdateContactFromSaleView(APIView):
                     return f.get("id")
             return None
 
-        custom_fields = []
         health = next((li for li in line_items if li.get("kind") == "health"), None)
-        if health:
-            fid = find_id("Health Insurance")
-            if fid:
-                custom_fields.append(
-                    {"id": fid, "value": f"{health.get('carrier')} - {health.get('product')}"}
-                )
         life = next((li for li in line_items if li.get("kind") == "life"), None)
-        if life:
-            fid = find_id("Life Insurance")
-            if fid:
-                custom_fields.append(
-                    {"id": fid, "value": f"{life.get('carrier')} - {life.get('product')}"}
-                )
         addons = [li for li in line_items if li.get("kind") == "addon"]
-        if addons:
-            fid = find_id("Addons")
+
+        def policy_label(li):
+            return f"{li.get('carrier')} - {li.get('product')}" if li else ""
+
+        def premium_value(li):
+            if not li:
+                return ""
+            amt = li.get("amount")
+            return "" if amt in (None, "") else str(amt)
+
+        # Always send every managed field so the contact stays in sync with the
+        # sale: fields with no matching line item are cleared (empty string).
+        desired = {
+            "Health Insurance": policy_label(health),
+            "Health Insurance Premium": premium_value(health),
+            "Life Insurance": policy_label(life),
+            "Life Insurance Premium": premium_value(life),
+            "Addons": ", ".join(a.get("product") or "" for a in addons),
+        }
+
+        custom_fields = []
+        for label, value in desired.items():
+            fid = find_id(label)
             if fid:
-                custom_fields.append(
-                    {"id": fid, "value": ", ".join(a.get("product") or "" for a in addons)}
-                )
+                custom_fields.append({"id": fid, "value": value})
 
         if not custom_fields:
             return Response({"success": True, "updated": 0})

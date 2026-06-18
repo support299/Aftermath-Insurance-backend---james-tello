@@ -23,7 +23,7 @@ from rest_framework.views import APIView
 
 from apps.dbapi.registry import DENY, TABLES
 
-RESERVED_PARAMS = {"select", "order", "limit", "offset"}
+RESERVED_PARAMS = {"select", "order", "limit", "offset", "or"}
 
 
 def json_value(value):
@@ -83,6 +83,32 @@ def split_op(raw: str):
         return f"not.{op}", value
     op, _, value = raw.partition(".")
     return op, value
+
+
+def split_top_level(s: str):
+    """Split on top-level commas, ignoring commas nested inside parentheses."""
+    parts, depth, current = [], 0, ""
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current.strip())
+    return parts
+
+
+def parse_or_group(raw: str):
+    """Parse a PostgREST 'or' value '(cond,cond,...)' into 'column.op.value' strings."""
+    s = raw.strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+    return split_top_level(s)
 
 
 def coerce_scalar(model, attname: str, value: str):
@@ -166,9 +192,25 @@ class TableView(APIView):
     def get_config(self, table):
         return TABLES.get(table)
 
+    def build_or(self, config, raw):
+        """Combine an 'or=(...)' group of conditions into a single OR-ed Q."""
+        combined = None
+        for cond in parse_or_group(raw):
+            column, _, rest = cond.partition(".")
+            attname = config.columns.get(column)
+            if attname is None:
+                raise ValueError(f"Unknown column: {column}")
+            op, value = split_op(rest)
+            q = build_filter(config.model, attname, op, value)
+            combined = q if combined is None else (combined | q)
+        return combined if combined is not None else Q()
+
     def apply_filters(self, request, config, queryset):
         for key in request.query_params.keys():
             if key in RESERVED_PARAMS:
+                if key == "or":
+                    for raw in request.query_params.getlist("or"):
+                        queryset = queryset.filter(self.build_or(config, raw))
                 continue
             attname = config.columns.get(key)
             if attname is None:

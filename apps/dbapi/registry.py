@@ -374,6 +374,7 @@ TABLES: dict[str, TableConfig] = {
             "team_name": "team_name",
             "sale_date": "sale_date",
             "customer_name": "customer_name",
+            "ghl_contact_id": "ghl_contact_id",
             "deal_size": "deal_size",
             "carrier": "carrier",
             "product": "product",
