@@ -13,7 +13,6 @@ from django.db.models import Q
 from apps.authentication.models import Profile, UserRole
 from apps.catalog.models import AddOn, Carrier, LeadSource, Product
 from apps.dbapi.roles import (
-    current_ghl_user_ids,
     is_admin,
     is_manager,
     managed_team_ids,
@@ -226,16 +225,6 @@ def ghl_users_select(user):
     if is_admin(user):
         return None
     return Q(app_user_id=user.pk)
-
-
-# ghl_contacts_select_own: user_id IN current_ghl_user_ids() OR admin
-def ghl_contacts_select(user):
-    if not user.is_authenticated:
-        return DENY
-    if is_admin(user):
-        return None
-    ids = current_ghl_user_ids(user)
-    return Q(user_id__in=ids) if ids else Q(pk__in=[])
 
 
 # --- registry ---------------------------------------------------------------
@@ -468,7 +457,7 @@ TABLES: dict[str, TableConfig] = {
             "updated_at": "updated_at",
         },
         policy=Policy(
-            select=ghl_contacts_select,
+            select=authenticated_only,
             insert=admin_write,
             update=lambda user: None if is_admin(user) else DENY,
             delete=lambda user: None if is_admin(user) else DENY,
