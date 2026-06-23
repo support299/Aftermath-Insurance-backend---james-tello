@@ -12,6 +12,7 @@ from django.db.models import Q
 
 from apps.authentication.models import Profile, UserRole
 from apps.catalog.models import AddOn, Carrier, LeadSource, Product
+from apps.company.models import CompanySettings
 from apps.dbapi.roles import (
     is_admin,
     is_manager,
@@ -373,6 +374,7 @@ TABLES: dict[str, TableConfig] = {
             "lead_source": "lead_source",
             "cost_per_lead": "cost_per_lead",
             "notes": "notes",
+            "reporting_only": "reporting_only",
             "created_at": "created_at",
         },
         policy=Policy(
@@ -461,6 +463,20 @@ TABLES: dict[str, TableConfig] = {
             insert=admin_write,
             update=lambda user: None if is_admin(user) else DENY,
             delete=lambda user: None if is_admin(user) else DENY,
+        ),
+    ),
+    "company_settings": TableConfig(
+        model=CompanySettings,
+        columns={
+            "id": "id",
+            "reporting_timezone": "reporting_timezone",
+            "updated_at": "updated_at",
+        },
+        policy=Policy(
+            select=authenticated_only,
+            insert=lambda user, row: False,
+            update=lambda user: None if is_admin(user) else DENY,
+            delete=lambda user: DENY,
         ),
     ),
 }

@@ -38,6 +38,7 @@ LOCAL_APPS = [
     "apps.targets",
     "apps.ghl",
     "apps.dbapi",
+    "apps.company",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

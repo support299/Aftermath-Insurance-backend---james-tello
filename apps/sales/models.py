@@ -37,6 +37,10 @@ class Sale(models.Model):
     lead_source = models.TextField(null=True, blank=True)
     cost_per_lead = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
+    reporting_only = models.BooleanField(
+        default=False,
+        help_text="When true, sale is recorded for reporting only — no GHL contact sync.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

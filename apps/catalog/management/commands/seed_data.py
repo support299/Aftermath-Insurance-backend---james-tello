@@ -3,6 +3,7 @@
 from django.core.management.base import BaseCommand
 
 from apps.catalog.models import AddOn, Carrier, LeadSource, Product
+from apps.company.models import CompanySettings
 from apps.teams.models import Team
 
 CARRIERS = [
@@ -46,4 +47,5 @@ class Command(BaseCommand):
             LeadSource.objects.get_or_create(name=name)
         for name in TEAMS:
             Team.objects.get_or_create(name=name)
+        CompanySettings.load()
         self.stdout.write(self.style.SUCCESS("Seed data created."))

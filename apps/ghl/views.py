@@ -143,6 +143,8 @@ class UpdateContactFromSaleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        if request.data.get("skipGhlSync"):
+            return Response({"success": True, "skipped": True, "updated": 0})
         contact_id = request.data.get("contactId")
         line_items = request.data.get("lineItems") or []
         if not contact_id:
