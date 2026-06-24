@@ -189,13 +189,29 @@ class UpdateContactFromSaleView(APIView):
             amt = li.get("amount")
             return "" if amt in (None, "") else str(amt)
 
+        def monthly_premium_value(li):
+            if not li:
+                return ""
+            monthly = li.get("monthlyPremium")
+            if monthly not in (None, ""):
+                return str(monthly)
+            amt = li.get("amount")
+            if amt in (None, ""):
+                return ""
+            try:
+                return str(round(float(amt) / 12, 2))
+            except (TypeError, ValueError):
+                return ""
+
         # Always send every managed field so the contact stays in sync with the
         # sale: fields with no matching line item are cleared (empty string).
         desired = {
             "Health Insurance": policy_label(health),
             "Health Insurance Premium": premium_value(health),
+            "Health Insurance Premium (Monthly)": monthly_premium_value(health),
             "Life Insurance": policy_label(life),
             "Life Insurance Premium": premium_value(life),
+            "Life Insurance Premium (Monthly)": monthly_premium_value(life),
             "Addons": ", ".join(a.get("product") or "" for a in addons),
         }
 
