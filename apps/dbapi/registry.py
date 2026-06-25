@@ -314,6 +314,8 @@ TABLES: dict[str, TableConfig] = {
             "name": "name",
             "carrier_id": "carrier_id",
             "active": "active",
+            "additional_price": "additional_price",
+            "additional_includes": "additional_includes",
             "created_at": "created_at",
         },
         policy=Policy(
