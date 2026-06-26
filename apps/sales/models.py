@@ -41,6 +41,12 @@ class Sale(models.Model):
         default=False,
         help_text="When true, sale is recorded for reporting only — no GHL contact sync.",
     )
+    import_batch_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Set on bulk-imported sales so the batch can be rolled back.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -55,6 +61,7 @@ class Sale(models.Model):
             models.Index(fields=["agent"], name="idx_sales_agent"),
             models.Index(fields=["team"], name="idx_sales_team"),
             models.Index(fields=["-sale_date"], name="idx_sales_date"),
+            models.Index(fields=["import_batch_id"], name="idx_sales_import_batch"),
         ]
 
     def __str__(self) -> str:

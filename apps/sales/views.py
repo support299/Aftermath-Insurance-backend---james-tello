@@ -9,12 +9,15 @@ change visibility anywhere else (Sales page, Dashboard, etc. stay role-scoped).
 
 import datetime
 
+from django.db.models import Count, DecimalField, Q, Sum, Value
+from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_datetime
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.authentication.models import Profile
+from apps.dbapi.roles import is_admin, is_manager, managed_team_ids
 from apps.expenses.models import Expense
 from apps.sales.models import Sale
 from apps.teams.models import Team
@@ -95,5 +98,76 @@ class LeaderboardView(APIView):
                 "expenses": expenses,
                 "teams": teams,
                 "profiles": profiles,
+            }
+        )
+
+
+class AgentsListView(APIView):
+    """Paginated agent directory with aggregated sales stats (Agents page)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not (is_admin(user) or is_manager(user)):
+            return Response({"detail": "Forbidden"}, status=403)
+
+        search = request.query_params.get("search", "").strip()
+        team = request.query_params.get("team", "all")
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.query_params.get("page_size", 15))))
+        except (TypeError, ValueError):
+            page_size = 15
+
+        qs = Profile.objects.select_related("team")
+        if is_admin(user):
+            pass
+        else:
+            managed = managed_team_ids(user)
+            qs = qs.filter(Q(user_id=user.pk) | Q(team_id__in=managed))
+
+        qs = qs.annotate(
+            sales_count=Count("user__sales"),
+            revenue=Coalesce(
+                Sum("user__sales__deal_size"),
+                Value(0),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+        )
+
+        if search:
+            qs = qs.filter(display_name__icontains=search)
+        if team != "all":
+            if team == "none":
+                qs = qs.filter(team_id__isnull=True)
+            else:
+                qs = qs.filter(team_id=team)
+
+        total = qs.count()
+        offset = (page - 1) * page_size
+        profiles = qs.order_by("-revenue", "display_name")[offset : offset + page_size]
+
+        data = [
+            {
+                "agent_id": str(p.user_id),
+                "agent_name": p.display_name,
+                "team_id": str(p.team_id) if p.team_id else None,
+                "team_name": p.team.name if p.team else "Unassigned",
+                "sales_count": p.sales_count,
+                "revenue": _num(p.revenue),
+            }
+            for p in profiles
+        ]
+
+        return Response(
+            {
+                "data": data,
+                "count": total,
+                "page": page,
+                "page_size": page_size,
             }
         )

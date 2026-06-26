@@ -23,7 +23,7 @@ from rest_framework.views import APIView
 
 from apps.dbapi.registry import DENY, TABLES
 
-RESERVED_PARAMS = {"select", "order", "limit", "offset", "or"}
+RESERVED_PARAMS = {"select", "order", "limit", "offset", "or", "count"}
 
 
 def json_value(value):
@@ -238,9 +238,14 @@ class TableView(APIView):
             order_by.append(expr)
         if order_by:
             queryset = queryset.order_by(*order_by)
+        offset = request.query_params.get("offset")
         limit = request.query_params.get("limit")
+        start = int(offset) if offset is not None else 0
         if limit is not None:
-            queryset = queryset[: int(limit)]
+            end = start + int(limit)
+            queryset = queryset[start:end]
+        elif start:
+            queryset = queryset[start:]
         return queryset
 
     def serialize_rows(self, config, queryset, select: str):
@@ -307,11 +312,17 @@ class TableView(APIView):
             queryset = queryset.filter(scope)
         try:
             queryset = self.apply_filters(request, config, queryset)
+            total_count = None
+            if request.query_params.get("count") == "exact":
+                total_count = queryset.count()
             queryset = self.apply_order_limit(request, config, queryset)
             rows = self.serialize_rows(config, queryset, request.query_params.get("select", "*"))
         except ValueError as e:
             return error_response(str(e))
-        return Response({"data": rows})
+        payload = {"data": rows}
+        if total_count is not None:
+            payload["count"] = total_count
+        return Response(payload)
 
     def post(self, request, table):
         config = self.get_config(table)

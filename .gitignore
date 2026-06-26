@@ -10,5 +10,7 @@ venv/
 staticfiles/
 media/
 .DS_Store
-auth_users_export.csv
-*-export-*.csv
+
+# Data exports, imports, and DB backups (local only)
+*.csv
+*.dump

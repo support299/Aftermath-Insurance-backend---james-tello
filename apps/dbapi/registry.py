@@ -377,6 +377,7 @@ TABLES: dict[str, TableConfig] = {
             "cost_per_lead": "cost_per_lead",
             "notes": "notes",
             "reporting_only": "reporting_only",
+            "import_batch_id": "import_batch_id",
             "created_at": "created_at",
         },
         policy=Policy(
