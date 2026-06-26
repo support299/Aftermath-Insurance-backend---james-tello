@@ -44,7 +44,6 @@ class Sale(models.Model):
     import_batch_id = models.UUIDField(
         null=True,
         blank=True,
-        db_index=True,
         help_text="Set on bulk-imported sales so the batch can be rolled back.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
