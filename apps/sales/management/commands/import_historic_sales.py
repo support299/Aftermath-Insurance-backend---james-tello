@@ -3,8 +3,11 @@
 Creates 173 reporting-only sales per valid agent (2026-01-01 .. 2026-06-22),
 one per day, using Column F as the annual premium on a Historic Sync add-on line item.
 
-Red-highlighted agents are skipped (not in our database). Yellow agents use the
-first Profile match when multiple exist (Collin Fleming).
+Red-highlighted agents are skipped by default (not in our database). Use
+``--red-mappings`` to import specific red rows under corrected Profile names
+(sheet name → display name, comma-separated pairs).
+
+Yellow agents use the first Profile match when multiple exist (Collin Fleming).
 
 Every created sale is tagged with ``import_batch_id`` (UUID) for rollback via
 ``rollback_historic_sales``.
@@ -12,6 +15,9 @@ Every created sale is tagged with ``import_batch_id`` (UUID) for rollback via
 Usage:
     python manage.py import_historic_sales --dry-run
     python manage.py import_historic_sales /path/to/file.xlsx
+    python manage.py import_historic_sales --dry-run \\
+        --only-agents "Albert Warner,Brody Judd" \\
+        --red-mappings "Albert Warner:Austin Warner,Brody Judd:Brody Judd"
     python manage.py rollback_historic_sales <batch-uuid>
 """
 
@@ -203,6 +209,60 @@ def _line_item(amount: Decimal) -> list[dict]:
     ]
 
 
+def _parse_red_mappings(raw: str) -> dict[str, str]:
+    """Parse ``Sheet Name:Profile Name,...`` (case-insensitive sheet keys)."""
+    mappings: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise CommandError(
+                f"Invalid --red-mappings entry {part!r}; expected Sheet Name:Profile Name."
+            )
+        sheet_name, profile_name = part.split(":", 1)
+        sheet_name = sheet_name.strip()
+        profile_name = profile_name.strip()
+        if not sheet_name or not profile_name:
+            raise CommandError(
+                f"Invalid --red-mappings entry {part!r}; both names are required."
+            )
+        mappings[sheet_name.lower()] = profile_name
+    return mappings
+
+
+def _resolve_profile(
+    profile_name: str,
+    *,
+    row_num: int,
+    sheet_name: str,
+) -> tuple[Profile | None, str | None]:
+    profiles = list(
+        Profile.objects.select_related("user", "team")
+        .filter(display_name__iexact=profile_name)
+        .order_by("user_id")
+    )
+    if not profiles:
+        return None, (
+            f"Row {row_num} ({sheet_name}): no Profile match for "
+            f"{profile_name!r} — skipped."
+        )
+    warning = None
+    if len(profiles) > 1:
+        warning = (
+            f"Row {row_num} ({sheet_name}): {len(profiles)} profiles for "
+            f"{profile_name!r}; using {profiles[0].display_name} ({profiles[0].user_id})."
+        )
+    return profiles[0], warning
+
+
+@dataclass
+class AgentPlan:
+    row: SheetRow
+    profile: Profile
+    sale_agent_name: str
+
+
 class Command(BaseCommand):
     help = "Import historic YTD sales from the James spreadsheet (Sheet 1)."
 
@@ -228,6 +288,14 @@ class Command(BaseCommand):
             default="",
             help="Comma-separated agent names to import (case-insensitive exact match on sheet Column A).",
         )
+        parser.add_argument(
+            "--red-mappings",
+            default="",
+            help=(
+                "Comma-separated sheet-name:profile-name pairs for red rows "
+                "(e.g. 'Albert Warner:Austin Warner,Brody Judd:Brody Judd')."
+            ),
+        )
 
     def handle(self, *args, **options):
         path = Path(options["xlsx_path"]).expanduser()
@@ -250,14 +318,34 @@ class Command(BaseCommand):
         sheet_rows = parse_sheet1(path)
         red_rows = [r for r in sheet_rows if r.color_class == "red"]
         import_rows = [r for r in sheet_rows if r.color_class != "red"]
+        red_mappings = _parse_red_mappings(options["red_mappings"]) if options["red_mappings"] else {}
 
+        allowed: set[str] | None = None
         if options["only_agents"]:
             allowed = {a.strip().lower() for a in options["only_agents"].split(",") if a.strip()}
             import_rows = [r for r in import_rows if r.agent_name.lower() in allowed]
-            if not import_rows:
-                raise CommandError(
-                    f"No importable rows matched --only-agents: {options['only_agents']}"
-                )
+
+        mapped_red_rows: list[SheetRow] = []
+        if red_mappings:
+            sheet_by_name = {r.agent_name.lower(): r for r in sheet_rows}
+            for sheet_key, profile_name in red_mappings.items():
+                row = sheet_by_name.get(sheet_key)
+                if row is None:
+                    raise CommandError(
+                        f"--red-mappings sheet name not found in workbook: {sheet_key!r}"
+                    )
+                if row.color_class != "red":
+                    raise CommandError(
+                        f"--red-mappings {row.agent_name!r} (row {row.row_num}) is not a red row."
+                    )
+                if allowed is not None and sheet_key not in allowed:
+                    continue
+                mapped_red_rows.append(row)
+
+        if allowed is not None and not import_rows and not mapped_red_rows:
+            raise CommandError(
+                f"No importable rows matched --only-agents: {options['only_agents']}"
+            )
 
         contact = GhlContact.objects.filter(id=GHL_CONTACT_ID).first()
         if contact is None:
@@ -273,34 +361,59 @@ class Command(BaseCommand):
         dates = _sale_dates()
         end_date = START_DATE + timedelta(days=IMPORT_DAYS - 1)
 
-        agent_plans: list[tuple[SheetRow, Profile]] = []
-        skipped_red = len(red_rows)
+        agent_plans: list[AgentPlan] = []
         skipped_no_profile: list[SheetRow] = []
         warnings: list[str] = []
 
         for row in import_rows:
-            profiles = list(
-                Profile.objects.select_related("user", "team")
-                .filter(display_name__iexact=row.agent_name)
-                .order_by("user_id")
+            profile, msg = _resolve_profile(
+                row.agent_name,
+                row_num=row.row_num,
+                sheet_name=row.agent_name,
             )
-            if not profiles:
+            if profile is None:
                 skipped_no_profile.append(row)
+                warnings.append(msg)
+                continue
+            if msg:
+                warnings.append(msg)
+            agent_plans.append(
+                AgentPlan(row=row, profile=profile, sale_agent_name=row.agent_name)
+            )
+
+        for row in mapped_red_rows:
+            profile_name = red_mappings[row.agent_name.lower()]
+            profile, msg = _resolve_profile(
+                profile_name,
+                row_num=row.row_num,
+                sheet_name=row.agent_name,
+            )
+            if profile is None:
+                skipped_no_profile.append(row)
+                warnings.append(msg)
+                continue
+            if msg:
+                warnings.append(msg)
+            existing = profile.user_id
+            if any(plan.profile.user_id == existing for plan in agent_plans):
                 warnings.append(
-                    f"Row {row.row_num} ({row.agent_name}): no Profile match — skipped."
+                    f"Row {row.row_num} ({row.agent_name} → {profile.display_name}): "
+                    f"profile already scheduled — skipped duplicate."
                 )
                 continue
-            if len(profiles) > 1:
-                warnings.append(
-                    f"Row {row.row_num} ({row.agent_name}): {len(profiles)} profiles; "
-                    f"using {profiles[0].display_name} ({profiles[0].user_id})."
+            agent_plans.append(
+                AgentPlan(
+                    row=row,
+                    profile=profile,
+                    sale_agent_name=profile.display_name,
                 )
-            agent_plans.append((row, profiles[0]))
+            )
 
         if not agent_plans:
             raise CommandError("No agents matched — nothing to import.")
 
         total_sales = len(agent_plans) * IMPORT_DAYS
+        skipped_red = len(red_rows) - len(mapped_red_rows)
 
         self.stdout.write(f"Workbook: {path}")
         self.stdout.write(f"Batch ID: {batch_id}")
@@ -308,9 +421,17 @@ class Command(BaseCommand):
         self.stdout.write(f"GHL contact: {contact.name} ({contact.id})")
         self.stdout.write(f"Add-on: {addon.name}")
         self.stdout.write(f"Agents to import: {len(agent_plans)}")
+        self.stdout.write(f"Red rows via --red-mappings: {len(mapped_red_rows)}")
         self.stdout.write(f"Red rows skipped: {skipped_red}")
         self.stdout.write(f"No-profile rows skipped: {len(skipped_no_profile)}")
         self.stdout.write(f"Sales to create: {total_sales}")
+
+        for plan in agent_plans:
+            src = "red mapping" if plan.row.color_class == "red" else "sheet"
+            self.stdout.write(
+                f"  • {plan.row.agent_name} → {plan.profile.display_name} "
+                f"(${plan.row.daily_amount}/day, {src})"
+            )
 
         for msg in warnings:
             self.stdout.write(self.style.WARNING(msg))
@@ -323,7 +444,9 @@ class Command(BaseCommand):
         to_create: list[Sale] = []
         seq = 0
 
-        for row, profile in agent_plans:
+        for plan in agent_plans:
+            row = plan.row
+            profile = plan.profile
             team = profile.team
             for sale_dt in sale_dates:
                 seq += 1
@@ -332,7 +455,7 @@ class Command(BaseCommand):
                     Sale(
                         sale_id=sale_id,
                         agent=profile.user,
-                        agent_name=row.agent_name,
+                        agent_name=plan.sale_agent_name,
                         team=team,
                         team_name=team.name if team else None,
                         sale_date=sale_dt,

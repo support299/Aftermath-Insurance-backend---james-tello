@@ -288,12 +288,16 @@ class TableView(APIView):
         return rows
 
     def coerce_values(self, config, values: dict) -> dict:
-        """Map exposed column names to model attnames; unknown columns rejected."""
+        """Map exposed column names to model attnames; coerce to Python types."""
         out = {}
+        field_map = {f.attname: f for f in config.model._meta.fields}
         for key, val in values.items():
             attname = config.columns.get(key)
             if attname is None:
                 raise ValueError(f"Unknown column: {key}")
+            field = field_map.get(attname)
+            if field is not None and val is not None:
+                val = field.to_python(val)
             out[attname] = val
         return out
 

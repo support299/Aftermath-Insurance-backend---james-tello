@@ -1,0 +1,60 @@
+from django.urls import path
+
+from apps.gamification.admin_views import (
+    AdminAchievementDetailView,
+    AdminAchievementsView,
+    AdminAgentAdjustPointsView,
+    AdminAgentAdjustXpView,
+    AdminAgentProgressListView,
+    AdminContestDetailView,
+    AdminContestsView,
+    AdminEvaluateAchievementsView,
+    AdminGamificationConfigView,
+    AdminLevelDetailView,
+    AdminLevelsView,
+    AdminRecalculateAllView,
+    AdminRedemptionDetailView,
+    AdminRedemptionsListView,
+    AdminRewardDetailView,
+    AdminRewardsView,
+)
+from apps.gamification.manager_views import ManagerContestDetailView, ManagerContestsView
+from apps.gamification.views import (
+    ActivityFeedView,
+    AllProgressView,
+    IncentivesView,
+    MyProgressView,
+    PendingRedemptionsView,
+    RedeemRewardView,
+    RedemptionReviewView,
+)
+
+urlpatterns = [
+    path("me/", MyProgressView.as_view(), name="gamification-me"),
+    path("progress/", AllProgressView.as_view(), name="gamification-progress"),
+    path("activity/", ActivityFeedView.as_view(), name="gamification-activity"),
+    path("incentives/", IncentivesView.as_view(), name="gamification-incentives"),
+    path("rewards/<uuid:reward_id>/redeem/", RedeemRewardView.as_view(), name="gamification-redeem"),
+    path("redemptions/pending/", PendingRedemptionsView.as_view(), name="gamification-redemptions-pending"),
+    path("redemptions/<uuid:redemption_id>/", RedemptionReviewView.as_view(), name="gamification-redemption-review"),
+    # Admin settings (in-app)
+    path("admin/rewards/", AdminRewardsView.as_view(), name="gamification-admin-rewards"),
+    path("admin/rewards/<uuid:reward_id>/", AdminRewardDetailView.as_view(), name="gamification-admin-reward-detail"),
+    path("admin/contests/", AdminContestsView.as_view(), name="gamification-admin-contests"),
+    path("admin/contests/<uuid:contest_id>/", AdminContestDetailView.as_view(), name="gamification-admin-contest-detail"),
+    path("admin/achievements/", AdminAchievementsView.as_view(), name="gamification-admin-achievements"),
+    path("admin/achievements/<uuid:achievement_id>/", AdminAchievementDetailView.as_view(), name="gamification-admin-achievement-detail"),
+    path("admin/redemptions/", AdminRedemptionsListView.as_view(), name="gamification-admin-redemptions"),
+    path("admin/redemptions/<uuid:redemption_id>/", AdminRedemptionDetailView.as_view(), name="gamification-admin-redemption-detail"),
+    path("admin/evaluate-achievements/", AdminEvaluateAchievementsView.as_view(), name="gamification-admin-evaluate"),
+    path("admin/config/", AdminGamificationConfigView.as_view(), name="gamification-admin-config"),
+    path("admin/levels/", AdminLevelsView.as_view(), name="gamification-admin-levels"),
+    path("admin/levels/<uuid:level_id>/", AdminLevelDetailView.as_view(), name="gamification-admin-level-detail"),
+    path("admin/agent-progress/", AdminAgentProgressListView.as_view(), name="gamification-admin-agent-progress"),
+    path("admin/agent-progress/<uuid:agent_id>/adjust-points/", AdminAgentAdjustPointsView.as_view(), name="gamification-admin-adjust-points"),
+    path("admin/agent-progress/<uuid:agent_id>/adjust-xp/", AdminAgentAdjustXpView.as_view(), name="gamification-admin-adjust-xp"),
+    path("admin/recalculate-all/", AdminRecalculateAllView.as_view(), name="gamification-admin-recalculate"),
+    # Manager team contests
+    path("manager/contests/", ManagerContestsView.as_view(), name="gamification-manager-contests"),
+    path("manager/contests/<uuid:contest_id>/", ManagerContestDetailView.as_view(), name="gamification-manager-contest-detail"),
+]

@@ -14,3 +14,4 @@ media/
 # Data exports, imports, and DB backups (local only)
 *.csv
 *.dump
+.staging_dump.sql
