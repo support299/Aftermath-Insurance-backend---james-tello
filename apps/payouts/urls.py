@@ -1,0 +1,46 @@
+from django.urls import path
+
+from apps.payouts.views import (
+    AdminCommissionDetailView,
+    AdminCommissionsView,
+    AdminCompLevelDetailView,
+    AdminCompLevelsView,
+    AdminMilestoneDetailView,
+    AdminMilestonesView,
+    AdminSetAgentCompLevelView,
+    AdminTrackerConfigView,
+    AgentIncomeGoalView,
+    AgentMilestonesView,
+    AgentOnboardingDashboardView,
+    AgentTrackerView,
+    CommissionsCatalogView,
+    CompLevelsListView,
+    EstimatePayoutView,
+    MyCompLevelView,
+    RecalcSalePayoutView,
+)
+
+urlpatterns = [
+    path("comp-levels/", CompLevelsListView.as_view()),
+    path("me/comp-level/", MyCompLevelView.as_view()),
+    path("commissions/catalog/", CommissionsCatalogView.as_view()),
+    path("estimate/", EstimatePayoutView.as_view()),
+    path("onboarding/", AgentOnboardingDashboardView.as_view()),
+    path("onboarding/<uuid:agent_id>/", AgentOnboardingDashboardView.as_view()),
+    path("tracker/", AgentTrackerView.as_view()),
+    path("tracker/<uuid:agent_id>/", AgentTrackerView.as_view()),
+    path("income-goal/", AgentIncomeGoalView.as_view()),
+    path("income-goal/<uuid:agent_id>/", AgentIncomeGoalView.as_view()),
+    path("milestones/", AgentMilestonesView.as_view()),
+    path("milestones/<uuid:agent_id>/", AgentMilestonesView.as_view()),
+    path("sales/<uuid:sale_id>/recalc/", RecalcSalePayoutView.as_view()),
+    # Admin
+    path("admin/comp-levels/", AdminCompLevelsView.as_view()),
+    path("admin/comp-levels/<uuid:level_id>/", AdminCompLevelDetailView.as_view()),
+    path("admin/commissions/", AdminCommissionsView.as_view()),
+    path("admin/commissions/<uuid:commission_id>/", AdminCommissionDetailView.as_view()),
+    path("admin/agents/<uuid:agent_id>/comp-level/", AdminSetAgentCompLevelView.as_view()),
+    path("admin/tracker-config/", AdminTrackerConfigView.as_view()),
+    path("admin/milestones/", AdminMilestonesView.as_view()),
+    path("admin/milestones/<uuid:milestone_id>/", AdminMilestoneDetailView.as_view()),
+]

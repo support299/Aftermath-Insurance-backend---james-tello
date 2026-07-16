@@ -46,6 +46,15 @@ class Profile(models.Model):
         db_column="team_id",
         related_name="profiles",
     )
+    comp_level = models.ForeignKey(
+        "payouts.CompLevel",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_column="comp_level_id",
+        related_name="profiles",
+        help_text="Hidden from other agents; drives product payout rates.",
+    )
     must_change_password = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

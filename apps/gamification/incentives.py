@@ -147,6 +147,12 @@ def build_incentives_payload(agent_id: str) -> dict:
     week_start, week_end = _week_bounds(ref)
     challenges = weekly_challenges_for_agent(agent_id, week_start, week_end)
 
+    reward_qs = Reward.objects.filter(is_active=True).select_related("team")
+    if agent_team_id:
+        reward_qs = reward_qs.filter(Q(team__isnull=True) | Q(team_id=agent_team_id))
+    else:
+        reward_qs = reward_qs.filter(team__isnull=True)
+
     rewards = [
         {
             "id": str(r.id),
@@ -155,9 +161,11 @@ def build_incentives_payload(agent_id: str) -> dict:
             "description": r.description,
             "icon": r.icon,
             "points_cost": r.points_cost,
+            "team_name": r.team.name if r.team_id else None,
+            "scope": "team" if r.team_id else "global",
             "can_afford": (progress.points_balance if progress else 0) >= r.points_cost,
         }
-        for r in Reward.objects.filter(is_active=True).order_by("sort_order", "points_cost")
+        for r in reward_qs.order_by("sort_order", "points_cost")
     ]
 
     redemptions = [
@@ -170,11 +178,13 @@ def build_incentives_payload(agent_id: str) -> dict:
             "status": rd.status,
             "agent_note": rd.agent_note,
             "admin_note": rd.admin_note,
+            "team_name": rd.reward.team.name if rd.reward.team_id else None,
+            "scope": "team" if rd.reward.team_id else "global",
             "created_at": rd.created_at.isoformat(),
             "reviewed_at": rd.reviewed_at.isoformat() if rd.reviewed_at else None,
         }
         for rd in Redemption.objects.filter(agent_id=agent_id)
-        .select_related("reward")
+        .select_related("reward", "reward__team")
         .order_by("-created_at")[:20]
     ]
 

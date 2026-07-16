@@ -61,6 +61,9 @@ def _reward_payload(r: Reward) -> dict:
         "points_cost": r.points_cost,
         "sort_order": r.sort_order,
         "is_active": r.is_active,
+        "team_id": str(r.team_id) if r.team_id else None,
+        "team_name": r.team.name if getattr(r, "team", None) else None,
+        "scope": "team" if r.team_id else "global",
         "created_at": r.created_at.isoformat(),
     }
 
@@ -207,17 +210,26 @@ def _achievement_payload(a: AchievementDefinition) -> dict:
 
 
 def _redemption_payload(r: Redemption) -> dict:
+    reward = r.reward
+    agent_name = ""
+    profile = getattr(r.agent, "profile", None)
+    if profile is not None:
+        agent_name = profile.display_name or ""
     return {
         "id": str(r.id),
         "agent_id": str(r.agent_id),
         "agent_email": getattr(r.agent, "email", ""),
+        "agent_name": agent_name,
         "reward_id": str(r.reward_id),
-        "reward_name": r.reward.name,
-        "reward_icon": r.reward.icon,
+        "reward_name": reward.name,
+        "reward_icon": reward.icon,
         "points_cost": r.points_cost,
         "status": r.status,
         "agent_note": r.agent_note,
         "admin_note": r.admin_note,
+        "team_id": str(reward.team_id) if reward.team_id else None,
+        "team_name": reward.team.name if getattr(reward, "team", None) else None,
+        "scope": "team" if reward.team_id else "global",
         "created_at": r.created_at.isoformat(),
         "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
     }
@@ -229,7 +241,7 @@ class AdminRewardsView(AdminRequiredMixin, APIView):
     def get(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
-        rows = Reward.objects.order_by("sort_order", "points_cost")
+        rows = Reward.objects.select_related("team").order_by("sort_order", "points_cost")
         return Response({"rewards": [_reward_payload(r) for r in rows]})
 
     def post(self, request):
@@ -249,6 +261,8 @@ class AdminRewardsView(AdminRequiredMixin, APIView):
         if Reward.objects.filter(slug=slug).exists():
             return Response({"detail": "Slug already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Admin-created rewards are company-wide unless team_id is explicitly set.
+        team_id = request.data.get("team_id") or None
         reward = Reward.objects.create(
             slug=slug,
             name=name,
@@ -257,7 +271,9 @@ class AdminRewardsView(AdminRequiredMixin, APIView):
             points_cost=points_cost,
             sort_order=int(request.data.get("sort_order") or 0),
             is_active=bool(request.data.get("is_active", True)),
+            team_id=team_id,
         )
+        reward = Reward.objects.select_related("team").get(pk=reward.pk)
         return Response(_reward_payload(reward), status=status.HTTP_201_CREATED)
 
 
@@ -268,7 +284,7 @@ class AdminRewardDetailView(AdminRequiredMixin, APIView):
         if denied := self.deny_unless_admin(request):
             return denied
         try:
-            reward = Reward.objects.get(pk=reward_id)
+            reward = Reward.objects.select_related("team").get(pk=reward_id)
         except Reward.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -291,6 +307,7 @@ class AdminRewardDetailView(AdminRequiredMixin, APIView):
         if "is_active" in request.data:
             reward.is_active = bool(request.data["is_active"])
         reward.save()
+        reward = Reward.objects.select_related("team").get(pk=reward.pk)
         return Response(_reward_payload(reward))
 
     def delete(self, request, reward_id):
@@ -398,13 +415,19 @@ class AdminAchievementDetailView(AdminRequiredMixin, APIView):
 
 
 class AdminRedemptionsListView(AdminRequiredMixin, APIView):
+    """Company-wide reward redemptions only. Team rewards are reviewed by managers."""
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
         status_filter = (request.query_params.get("status") or "pending").strip()
-        qs = Redemption.objects.select_related("reward", "agent").order_by("-created_at")
+        qs = (
+            Redemption.objects.select_related("reward", "reward__team", "agent", "agent__profile")
+            .filter(reward__team__isnull=True)
+            .order_by("-created_at")
+        )
         if status_filter != "all":
             qs = qs.filter(status=status_filter)
         rows = qs[:100]
@@ -425,6 +448,15 @@ class AdminRedemptionDetailView(AdminRequiredMixin, APIView):
         ):
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
         try:
+            existing = Redemption.objects.select_related("reward").get(pk=redemption_id)
+        except Redemption.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if existing.reward.team_id:
+            return Response(
+                {"detail": "Team reward redemptions are approved by the team manager."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
             redemption = review_redemption(
                 redemption_id,
                 request.user.pk,
@@ -435,6 +467,10 @@ class AdminRedemptionDetailView(AdminRequiredMixin, APIView):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        redemption = (
+            Redemption.objects.select_related("reward", "reward__team", "agent", "agent__profile")
+            .get(pk=redemption.pk)
+        )
         return Response(_redemption_payload(redemption))
 
 
@@ -590,6 +626,7 @@ class AdminAgentProgressListView(AdminRequiredMixin, APIView):
                     "points_balance": points_balance,
                     "level_name": current.name if current else "Unranked",
                     "level_rank": current.rank if current else 0,
+                    "level_tier": current.tier_type if current else "level",
                 }
             )
         return Response(

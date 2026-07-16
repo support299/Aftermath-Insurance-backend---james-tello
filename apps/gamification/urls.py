@@ -18,7 +18,14 @@ from apps.gamification.admin_views import (
     AdminRewardDetailView,
     AdminRewardsView,
 )
-from apps.gamification.manager_views import ManagerContestDetailView, ManagerContestsView
+from apps.gamification.manager_views import (
+    ManagerContestDetailView,
+    ManagerContestsView,
+    ManagerRedemptionDetailView,
+    ManagerRedemptionsView,
+    ManagerRewardDetailView,
+    ManagerRewardsView,
+)
 from apps.gamification.views import (
     ActivityFeedView,
     AllProgressView,
@@ -57,4 +64,12 @@ urlpatterns = [
     # Manager team contests
     path("manager/contests/", ManagerContestsView.as_view(), name="gamification-manager-contests"),
     path("manager/contests/<uuid:contest_id>/", ManagerContestDetailView.as_view(), name="gamification-manager-contest-detail"),
+    path("manager/rewards/", ManagerRewardsView.as_view(), name="gamification-manager-rewards"),
+    path("manager/rewards/<uuid:reward_id>/", ManagerRewardDetailView.as_view(), name="gamification-manager-reward-detail"),
+    path("manager/redemptions/", ManagerRedemptionsView.as_view(), name="gamification-manager-redemptions"),
+    path(
+        "manager/redemptions/<uuid:redemption_id>/",
+        ManagerRedemptionDetailView.as_view(),
+        name="gamification-manager-redemption-detail",
+    ),
 ]

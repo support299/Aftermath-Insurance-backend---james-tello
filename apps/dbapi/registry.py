@@ -20,6 +20,7 @@ from apps.dbapi.roles import (
 )
 from apps.expenses.models import Expense
 from apps.ghl.models import GhlContact, GhlUser
+from apps.payouts.models import CompLevel, ProductCommission
 from apps.sales.models import Sale
 from apps.targets.models import Target
 from apps.teams.models import Team, TeamManager
@@ -239,11 +240,12 @@ TABLES: dict[str, TableConfig] = {
             "email": "email",
             "phone": "phone",
             "team_id": "team_id",
+            "comp_level_id": "comp_level_id",
             "must_change_password": "must_change_password",
             "created_at": "created_at",
             "updated_at": "updated_at",
         },
-        embeds={"team_id": ("teams", "team")},
+        embeds={"team_id": ("teams", "team"), "comp_level_id": ("comp_levels", "comp_level")},
         policy=Policy(
             select=profiles_select,
             insert=profiles_insert,
@@ -375,6 +377,7 @@ TABLES: dict[str, TableConfig] = {
             "line_items": "line_items",
             "lead_source": "lead_source",
             "cost_per_lead": "cost_per_lead",
+            "estimated_payout": "estimated_payout",
             "notes": "notes",
             "reporting_only": "reporting_only",
             "import_batch_id": "import_batch_id",
@@ -480,6 +483,44 @@ TABLES: dict[str, TableConfig] = {
             insert=lambda user, row: False,
             update=lambda user: None if is_admin(user) else DENY,
             delete=lambda user: DENY,
+        ),
+    ),
+    "comp_levels": TableConfig(
+        model=CompLevel,
+        columns={
+            "id": "id",
+            "code": "code",
+            "name": "name",
+            "sort_order": "sort_order",
+            "is_active": "is_active",
+            "created_at": "created_at",
+        },
+        policy=Policy(
+            # Agents can list levels for forms; rate assignment stays admin-only via REST.
+            select=authenticated_only,
+            insert=admin_write,
+            update=lambda user: None if is_admin(user) else DENY,
+            delete=lambda user: None if is_admin(user) else DENY,
+        ),
+    ),
+    "product_commissions": TableConfig(
+        model=ProductCommission,
+        columns={
+            "id": "id",
+            "product_id": "product_id",
+            "add_on_id": "add_on_id",
+            "label": "label",
+            "advance_months": "advance_months",
+            "rates": "rates",
+            "is_active": "is_active",
+            "created_at": "created_at",
+            "updated_at": "updated_at",
+        },
+        policy=Policy(
+            select=authenticated_only,
+            insert=admin_write,
+            update=lambda user: None if is_admin(user) else DENY,
+            delete=lambda user: None if is_admin(user) else DENY,
         ),
     ),
 }

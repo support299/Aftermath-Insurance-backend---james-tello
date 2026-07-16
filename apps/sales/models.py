@@ -36,6 +36,13 @@ class Sale(models.Model):
     line_items = models.JSONField(default=list)
     lead_source = models.TextField(null=True, blank=True)
     cost_per_lead = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    estimated_payout = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Expected agent check from product rates × advance months × monthly premium.",
+    )
     notes = models.TextField(null=True, blank=True)
     reporting_only = models.BooleanField(
         default=False,

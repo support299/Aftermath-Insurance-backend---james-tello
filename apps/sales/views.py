@@ -17,6 +17,9 @@ from rest_framework.views import APIView
 
 from apps.authentication.models import Profile
 from apps.dbapi.roles import is_admin, is_manager, managed_team_ids
+from apps.gamification.models import AgentProgress, LevelDefinition
+from apps.gamification.services import level_for_xp
+from apps.payouts.services import agents_tracker_summaries
 from apps.sales.leaderboard_service import build_leaderboard_payload
 
 
@@ -67,7 +70,7 @@ class LeaderboardView(APIView):
 
 
 class AgentsListView(APIView):
-    """Paginated agent directory with aggregated sales stats (Agents page)."""
+    """Paginated agent directory with sales + 13-week tracker summaries."""
 
     permission_classes = [IsAuthenticated]
 
@@ -113,22 +116,60 @@ class AgentsListView(APIView):
 
         total = qs.count()
         offset = (page - 1) * page_size
-        profiles = qs.order_by("-revenue", "display_name")[offset : offset + page_size]
+        profiles = list(qs.order_by("-revenue", "display_name")[offset : offset + page_size])
+
+        summaries = agents_tracker_summaries([p.user_id for p in profiles])
+        levels = list(LevelDefinition.objects.order_by("rank"))
+        progress_rows = {
+            str(pr.agent_id): pr
+            for pr in AgentProgress.objects.filter(
+                agent_id__in=[p.user_id for p in profiles]
+            ).select_related("level")
+        }
 
         def _num(value):
             return float(value) if value is not None else None
 
-        data = [
-            {
-                "agent_id": str(p.user_id),
-                "agent_name": p.display_name,
-                "team_id": str(p.team_id) if p.team_id else None,
-                "team_name": p.team.name if p.team else "Unassigned",
-                "sales_count": p.sales_count,
-                "revenue": _num(p.revenue),
+        def _rank_fields(agent_id) -> dict:
+            pr = progress_rows.get(str(agent_id))
+            if not pr:
+                return {
+                    "level_rank": 0,
+                    "level_name": "Unranked",
+                    "level_tier": "level",
+                    "total_xp": 0,
+                }
+            current = pr.level or level_for_xp(pr.total_xp, levels)
+            return {
+                "level_rank": current.rank if current else 0,
+                "level_name": current.name if current else "Unranked",
+                "level_tier": current.tier_type if current else "level",
+                "total_xp": int(pr.total_xp or 0),
             }
-            for p in profiles
-        ]
+
+        data = []
+        for p in profiles:
+            t = summaries.get(str(p.user_id), {})
+            data.append(
+                {
+                    "agent_id": str(p.user_id),
+                    "agent_name": p.display_name,
+                    "team_id": str(p.team_id) if p.team_id else None,
+                    "team_name": p.team.name if p.team else "Unassigned",
+                    "sales_count": p.sales_count,
+                    "revenue": _num(p.revenue),
+                    "first_sale_at": t.get("first_sale_at"),
+                    "current_week": t.get("current_week", 0),
+                    "phase": t.get("phase"),
+                    "phase_label": t.get("phase_label"),
+                    "phase_submitted": t.get("phase_submitted", 0),
+                    "phase_pct": t.get("phase_pct", 0),
+                    "phase_goal": t.get("phase_goal", 250000),
+                    "tracker_active": t.get("tracker_active", False),
+                    "estimated_payout_ytd": t.get("estimated_payout_ytd", 0),
+                    **_rank_fields(p.user_id),
+                }
+            )
 
         return Response(
             {

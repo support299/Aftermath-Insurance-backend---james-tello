@@ -176,7 +176,14 @@ def earn_challenge_points(agent_id, challenge_id: str, points: int) -> PointTran
 
 @transaction.atomic
 def request_redemption(agent_id, reward_id, agent_note: str = "") -> Redemption:
-    reward = Reward.objects.get(pk=reward_id, is_active=True)
+    reward = Reward.objects.select_related("team").get(pk=reward_id, is_active=True)
+    if reward.team_id:
+        from apps.authentication.models import Profile
+
+        agent_team_id = Profile.objects.filter(pk=agent_id).values_list("team_id", flat=True).first()
+        if str(agent_team_id or "") != str(reward.team_id):
+            raise ValueError("This reward is only available to agents on that team")
+
     progress = AgentProgress.objects.filter(agent_id=agent_id).first()
     balance = progress.points_balance if progress else 0
     if balance < reward.points_cost:

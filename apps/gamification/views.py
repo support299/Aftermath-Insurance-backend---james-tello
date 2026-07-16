@@ -89,6 +89,8 @@ class RedeemRewardView(APIView):
             redemption = request_redemption(request.user.pk, reward_id, agent_note=note)
         except InsufficientPointsError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except Reward.DoesNotExist:
             return Response({"detail": "Reward not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -119,6 +121,16 @@ class RedemptionReviewView(APIView):
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            existing = Redemption.objects.select_related("reward").get(pk=redemption_id)
+        except Redemption.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if existing.reward.team_id:
+            return Response(
+                {"detail": "Team reward redemptions are approved by the team manager."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
             redemption = review_redemption(
                 redemption_id,
                 request.user.pk,
@@ -140,7 +152,7 @@ class RedemptionReviewView(APIView):
 
 
 class PendingRedemptionsView(APIView):
-    """Admin queue of pending reward redemptions."""
+    """Admin queue of pending company-wide reward redemptions."""
 
     permission_classes = [IsAuthenticated]
 
@@ -149,7 +161,7 @@ class PendingRedemptionsView(APIView):
             return Response({"detail": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
 
         rows = (
-            Redemption.objects.filter(status=Redemption.STATUS_PENDING)
+            Redemption.objects.filter(status=Redemption.STATUS_PENDING, reward__team__isnull=True)
             .select_related("reward", "agent")
             .order_by("created_at")[:50]
         )

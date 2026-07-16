@@ -212,11 +212,21 @@ class Reward(models.Model):
     points_cost = models.PositiveIntegerField()
     sort_order = models.PositiveSmallIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        db_column="team_id",
+        related_name="rewards",
+        help_text="Null = company-wide reward visible to all agents.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "rewards"
         ordering = ["sort_order", "points_cost"]
+        indexes = [models.Index(fields=["team", "is_active"])]
 
     def __str__(self) -> str:
         return self.name
