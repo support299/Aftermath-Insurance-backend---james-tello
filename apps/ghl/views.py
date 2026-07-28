@@ -6,6 +6,8 @@ import logging
 
 import requests
 from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -268,6 +270,163 @@ def build_name(p: dict) -> str | None:
     return n or p.get("name") or None
 
 
+def _find_user_by_email(email: str) -> User | None:
+    normalized = email.strip().lower()
+    if not normalized:
+        return None
+    return (
+        User.objects.filter(Q(username__iexact=normalized) | Q(email__iexact=normalized))
+        .order_by("date_joined")
+        .first()
+    )
+
+
+def _sync_app_user_from_ghl(
+    *,
+    ghl_user_id: str,
+    name: str | None,
+    email: str | None,
+    phone: str | None,
+) -> tuple[str | None, bool]:
+    """Create/link/update the app user for a GHL user webhook.
+
+    Returns (app_user_id, created_with_default_password).
+    """
+    existing = GhlUser.objects.filter(id=ghl_user_id).first()
+    app_user: User | None = None
+    if existing and existing.app_user_id:
+        app_user = User.objects.filter(pk=existing.app_user_id).first()
+
+    created_with_default = False
+    normalized = (email or "").strip().lower() or None
+
+    if app_user is None and normalized:
+        app_user = _find_user_by_email(normalized)
+
+    if app_user is None and normalized:
+        try:
+            with transaction.atomic():
+                app_user = User.objects.create_user(
+                    username=normalized, email=normalized, password=DEFAULT_GHL_PASSWORD
+                )
+                Profile.objects.create(
+                    user=app_user, display_name=name or normalized, email=normalized
+                )
+                UserRole.objects.create(user=app_user, role="agent")
+                created_with_default = True
+        except IntegrityError:
+            # Concurrent create or pre-existing row — link to whoever owns the email.
+            app_user = _find_user_by_email(normalized)
+
+    if app_user is None:
+        return None, False
+
+    # UserCreate / UserUpdate after a prior UserDelete should restore access.
+    if not app_user.is_active:
+        app_user.is_active = True
+        app_user.save(update_fields=["is_active"])
+
+    if normalized:
+        conflict = (
+            User.objects.filter(Q(username__iexact=normalized) | Q(email__iexact=normalized))
+            .exclude(pk=app_user.pk)
+            .first()
+        )
+        if conflict:
+            # Email already belongs to another app user — re-link to that account
+            # instead of blowing up on username uniqueness.
+            app_user = conflict
+            if not app_user.is_active:
+                app_user.is_active = True
+                app_user.save(update_fields=["is_active"])
+        else:
+            if app_user.email != normalized or app_user.username != normalized:
+                app_user.email = normalized
+                app_user.username = normalized
+                app_user.save(update_fields=["email", "username"])
+
+    profile_update = {}
+    if name:
+        profile_update["display_name"] = name
+    if normalized:
+        profile_update["email"] = normalized
+    elif email:
+        profile_update["email"] = email
+    if phone is not None:
+        profile_update["phone"] = phone or None
+    if created_with_default:
+        profile_update["must_change_password"] = True
+
+    profile = Profile.objects.filter(pk=app_user.pk).first()
+    if profile is None:
+        Profile.objects.create(
+            user=app_user,
+            display_name=name or normalized or (app_user.email or str(app_user.pk)),
+            email=normalized or app_user.email,
+            phone=phone or None,
+            must_change_password=created_with_default,
+        )
+    elif profile_update:
+        Profile.objects.filter(pk=app_user.pk).update(
+            **profile_update, updated_at=timezone.now()
+        )
+
+    return str(app_user.pk), created_with_default
+
+
+def _handle_user_delete(entity_id: str, event_type: str, payload: dict) -> dict:
+    """Keep ghl_users row; deactivate the linked app login."""
+    ghl_user = GhlUser.objects.filter(id=entity_id).first()
+    deactivated = False
+    app_user_id = None
+
+    if ghl_user:
+        ghl_user.type = event_type
+        ghl_user.raw = payload
+        ghl_user.name = build_name(payload) or ghl_user.name
+        if payload.get("email"):
+            ghl_user.email = payload.get("email")
+        if payload.get("phone"):
+            ghl_user.phone = payload.get("phone")
+        if payload.get("locationId"):
+            ghl_user.location_id = payload.get("locationId")
+        ghl_user.save()
+
+        app_user_id = ghl_user.app_user_id
+        if app_user_id:
+            updated = User.objects.filter(pk=app_user_id, is_active=True).update(is_active=False)
+            deactivated = bool(updated)
+    else:
+        # Still record a stub so later lookups know this GHL id existed.
+        GhlUser.objects.create(
+            id=entity_id,
+            name=build_name(payload),
+            email=payload.get("email"),
+            phone=payload.get("phone"),
+            type=event_type,
+            location_id=payload.get("locationId"),
+            raw=payload,
+        )
+
+    action = "deactivated" if deactivated else "delete-no-active-user"
+    log_delivery(
+        status="success",
+        type=event_type,
+        entity_id=entity_id,
+        entity_table="ghl_users",
+        action=action,
+        payload=payload,
+    )
+    return {
+        "ok": True,
+        "action": action,
+        "table": "ghl_users",
+        "id": entity_id,
+        "app_user_id": str(app_user_id) if app_user_id else None,
+        "deactivated": deactivated,
+    }
+
+
 def handle_event(payload: dict) -> dict:
     event_type = payload.get("type") or ""
     entity_id = payload.get("id")
@@ -292,8 +451,11 @@ def handle_event(payload: dict) -> dict:
     model = GhlContact if is_contact else GhlUser
 
     try:
+        if event_type == "UserDelete":
+            return _handle_user_delete(entity_id, event_type, payload)
+
         if event_type.endswith("Delete"):
-            # Per requirement: do NOT delete the contact/user row. Just record the event.
+            # ContactDelete (and any other *Delete): keep the row, audit only.
             log_delivery(
                 status="skipped",
                 type=event_type,
@@ -326,46 +488,14 @@ def handle_event(payload: dict) -> dict:
 
         app_user_id = None
         if is_user:
-            existing = GhlUser.objects.filter(id=entity_id).first()
-            app_user_id = existing.app_user_id if existing else None
-
-            created_with_default = False
-            if not app_user_id and event_type != "UserDelete" and email:
-                normalized = email.strip().lower()
-                match = User.objects.filter(username__iexact=normalized).first()
-                if match:
-                    app_user_id = match.id
-                else:
-                    user = User.objects.create_user(
-                        username=normalized, email=normalized, password=DEFAULT_GHL_PASSWORD
-                    )
-                    # Mirrors the handle_new_user trigger
-                    Profile.objects.create(
-                        user=user, display_name=name or normalized, email=normalized
-                    )
-                    UserRole.objects.create(user=user, role="agent")
-                    app_user_id = user.id
-                    created_with_default = True
-
+            app_user_id, _created = _sync_app_user_from_ghl(
+                ghl_user_id=entity_id,
+                name=name,
+                email=email,
+                phone=phone,
+            )
             if app_user_id:
                 row["app_user_id"] = app_user_id
-                profile_update = {}
-                if name:
-                    profile_update["display_name"] = name
-                if email:
-                    profile_update["email"] = email
-                if phone:
-                    profile_update["phone"] = phone
-                if created_with_default:
-                    profile_update["must_change_password"] = True
-                if profile_update:
-                    Profile.objects.filter(pk=app_user_id).update(
-                        **profile_update, updated_at=timezone.now()
-                    )
-                if email:
-                    User.objects.filter(pk=app_user_id).update(
-                        email=email.strip().lower(), username=email.strip().lower()
-                    )
 
         obj = model.objects.filter(id=entity_id).first()
         if obj:

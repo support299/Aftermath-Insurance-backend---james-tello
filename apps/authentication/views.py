@@ -141,7 +141,7 @@ class ExchangeLogidView(APIView):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
         user = User.objects.filter(id=ghl_user.app_user_id).first()
-        if not user or not user.email:
+        if not user or not user.email or not user.is_active:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
         token = secrets.token_urlsafe(32)
