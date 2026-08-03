@@ -1,6 +1,7 @@
 import uuid
 
 from django.contrib.auth.models import AbstractUser
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 
@@ -54,6 +55,12 @@ class Profile(models.Model):
         db_column="comp_level_id",
         related_name="profiles",
         help_text="Hidden from other agents; drives product payout rates.",
+    )
+    licensed_states = ArrayField(
+        models.TextField(),
+        default=list,
+        blank=True,
+        help_text="US state codes (e.g. TX, FL) where this agent is licensed.",
     )
     must_change_password = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

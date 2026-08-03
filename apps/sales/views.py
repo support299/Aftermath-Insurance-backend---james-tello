@@ -167,6 +167,7 @@ class AgentsListView(APIView):
                     "phase_goal": t.get("phase_goal", 250000),
                     "tracker_active": t.get("tracker_active", False),
                     "estimated_payout_ytd": t.get("estimated_payout_ytd", 0),
+                    "licensed_states": list(p.licensed_states or []),
                     **_rank_fields(p.user_id),
                 }
             )

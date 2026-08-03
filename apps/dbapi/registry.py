@@ -100,13 +100,17 @@ def profiles_select(user):
     return q
 
 
-# profiles_update_own OR profiles_admin_all
+# profiles_update_own OR profiles_admin_all OR manager of agent's team
 def profiles_update(user):
     if not user.is_authenticated:
         return DENY
     if is_admin(user):
         return None
-    return Q(pk=user.pk)
+    q = Q(pk=user.pk)
+    mq = manager_team_q(user)
+    if mq is not None:
+        q |= mq
+    return q
 
 
 # profiles INSERT: only via admin policy (signup happens server-side)
@@ -241,6 +245,7 @@ TABLES: dict[str, TableConfig] = {
             "phone": "phone",
             "team_id": "team_id",
             "comp_level_id": "comp_level_id",
+            "licensed_states": "licensed_states",
             "must_change_password": "must_change_password",
             "created_at": "created_at",
             "updated_at": "updated_at",
