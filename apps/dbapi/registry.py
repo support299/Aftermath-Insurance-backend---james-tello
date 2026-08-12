@@ -18,7 +18,7 @@ from apps.dbapi.roles import (
     is_manager,
     managed_team_ids,
 )
-from apps.expenses.models import Expense
+from apps.expenses.models import CpaEntry, Expense
 from apps.ghl.models import GhlContact, GhlUser
 from apps.payouts.models import CompLevel, ProductCommission
 from apps.sales.models import Sale
@@ -206,6 +206,22 @@ def expenses_write(user):
     return Q(agent_id=user.pk)
 
 
+def cpa_entries_insert(user, row):
+    if not user.is_authenticated:
+        return False
+    if is_admin(user) or is_manager(user):
+        return True
+    return str(row.get("agent_id")) == str(user.pk)
+
+
+def cpa_entries_write(user):
+    if not user.is_authenticated:
+        return DENY
+    if is_admin(user) or is_manager(user):
+        return None
+    return Q(agent_id=user.pk)
+
+
 # targets_select_scoped: admin OR company scope OR own OR
 # (manager AND target's agent profile team is managed by user)
 def targets_select(user):
@@ -245,12 +261,19 @@ TABLES: dict[str, TableConfig] = {
             "phone": "phone",
             "team_id": "team_id",
             "comp_level_id": "comp_level_id",
+            "health_comp_level_id": "health_comp_level_id",
+            "life_comp_level_id": "life_comp_level_id",
             "licensed_states": "licensed_states",
             "must_change_password": "must_change_password",
             "created_at": "created_at",
             "updated_at": "updated_at",
         },
-        embeds={"team_id": ("teams", "team"), "comp_level_id": ("comp_levels", "comp_level")},
+        embeds={
+            "team_id": ("teams", "team"),
+            "comp_level_id": ("comp_levels", "comp_level"),
+            "health_comp_level_id": ("comp_levels", "health_comp_level"),
+            "life_comp_level_id": ("comp_levels", "life_comp_level"),
+        },
         policy=Policy(
             select=profiles_select,
             insert=profiles_insert,
@@ -414,6 +437,28 @@ TABLES: dict[str, TableConfig] = {
             delete=expenses_write,
         ),
     ),
+    "cpa_entries": TableConfig(
+        model=CpaEntry,
+        columns={
+            "id": "id",
+            "agent_id": "agent_id",
+            "week_start": "week_start",
+            "leads_uploaded": "leads_uploaded",
+            "lead_cost": "lead_cost",
+            "yes_count": "yes_count",
+            "quoted_count": "quoted_count",
+            "sold_count": "sold_count",
+            "check_amount": "check_amount",
+            "created_at": "created_at",
+            "updated_at": "updated_at",
+        },
+        policy=Policy(
+            select=expenses_select,
+            insert=cpa_entries_insert,
+            update=cpa_entries_write,
+            delete=cpa_entries_write,
+        ),
+    ),
     "targets": TableConfig(
         model=Target,
         columns={
@@ -481,6 +526,9 @@ TABLES: dict[str, TableConfig] = {
         columns={
             "id": "id",
             "reporting_timezone": "reporting_timezone",
+            "sms_cost_per_lead": "sms_cost_per_lead",
+            "cpa_cost_per_sale_target": "cpa_cost_per_sale_target",
+            "cpa_roi_target_multiple": "cpa_roi_target_multiple",
             "updated_at": "updated_at",
         },
         policy=Policy(
@@ -496,6 +544,7 @@ TABLES: dict[str, TableConfig] = {
             "id": "id",
             "code": "code",
             "name": "name",
+            "track": "track",
             "sort_order": "sort_order",
             "is_active": "is_active",
             "created_at": "created_at",

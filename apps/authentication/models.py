@@ -54,7 +54,25 @@ class Profile(models.Model):
         on_delete=models.SET_NULL,
         db_column="comp_level_id",
         related_name="profiles",
-        help_text="Hidden from other agents; drives product payout rates.",
+        help_text="Deprecated: use health_comp_level / life_comp_level. Kept in sync with health.",
+    )
+    health_comp_level = models.ForeignKey(
+        "payouts.CompLevel",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_column="health_comp_level_id",
+        related_name="health_profiles",
+        help_text="Drives health (+ add-on) product payout rates. Hidden from agents.",
+    )
+    life_comp_level = models.ForeignKey(
+        "payouts.CompLevel",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_column="life_comp_level_id",
+        related_name="life_profiles",
+        help_text="Drives life product payout rates. Hidden from agents.",
     )
     licensed_states = ArrayField(
         models.TextField(),

@@ -6,21 +6,38 @@ from django.db import models
 
 
 class CompLevel(models.Model):
-    """Agent compensation tier (e.g. Level 1–4, Leader). Rates key off `code`."""
+    """Agent compensation tier per track (health or life). Rates key off `code` within the track."""
+
+    class Track(models.TextChoices):
+        HEALTH = "health", "Health"
+        LIFE = "life", "Life"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    code = models.SlugField(max_length=32, unique=True)
+    code = models.SlugField(max_length=32)
     name = models.CharField(max_length=64)
+    track = models.CharField(
+        max_length=16,
+        choices=Track.choices,
+        default=Track.HEALTH,
+        db_index=True,
+        help_text="Health and Life use separate level ladders.",
+    )
     sort_order = models.PositiveSmallIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "comp_levels"
-        ordering = ["sort_order", "name"]
+        ordering = ["track", "sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["track", "code"],
+                name="comp_levels_track_code_uniq",
+            ),
+        ]
 
     def __str__(self) -> str:
-        return self.name
+        return f"{self.name} ({self.track})"
 
 
 class ProductCommission(models.Model):

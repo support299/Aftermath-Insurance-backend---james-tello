@@ -113,9 +113,19 @@ def resolve_commission(
 
 def estimate_line_items_payout(
     line_items: list[dict],
-    level_code: str | None,
+    level_code: str | None = None,
+    *,
+    health_level_code: str | None = None,
+    life_level_code: str | None = None,
 ) -> dict[str, Any]:
-    """Return total + per-line breakdown for a set of sale line items."""
+    """Return total + per-line breakdown for a set of sale line items.
+
+    Health (+ add-on) lines use health_level_code; life lines use life_level_code.
+    Legacy `level_code` fills both when track-specific codes are omitted.
+    """
+    health_code = health_level_code if health_level_code is not None else level_code
+    life_code = life_level_code if life_level_code is not None else level_code
+
     by_id, by_name = _commission_lookup()
     products = {
         (p.carrier.name.lower() if p.carrier else "", p.name.lower()): p
@@ -134,8 +144,10 @@ def estimate_line_items_payout(
             by_id=by_id,
             by_name=by_name,
         )
+        kind = (item.get("kind") or "").lower()
+        code = life_code if kind == "life" else health_code
         months = int(commission.advance_months) if commission else 0
-        rate = commission.rate_for(level_code) if commission else ZERO
+        rate = commission.rate_for(code) if commission else ZERO
         check = calc_line_check(monthly, months, rate)
         total += check
         lines.append(
@@ -148,11 +160,15 @@ def estimate_line_items_payout(
                 "estimated_check": float(check),
                 "matched": commission is not None,
                 "commission_id": str(commission.id) if commission else None,
+                "level_code": code,
+                "level_track": "life" if kind == "life" else "health",
             }
         )
 
     return {
-        "level_code": level_code,
+        "level_code": health_code,  # legacy
+        "health_level_code": health_code,
+        "life_level_code": life_code,
         "estimated_payout": float(total),
         "lines": lines,
     }
@@ -247,15 +263,30 @@ def agents_tracker_summaries(agent_ids: list) -> dict[str, dict[str, Any]]:
     return out
 
 
-def agent_comp_level_code(agent_id) -> str | None:
+def agent_comp_level_codes(agent_id) -> dict[str, str | None]:
+    """Return {health, life} level codes for an agent."""
     from apps.authentication.models import Profile
 
-    return (
+    row = (
         Profile.objects.filter(pk=agent_id)
-        .select_related("comp_level")
-        .values_list("comp_level__code", flat=True)
+        .select_related("health_comp_level", "life_comp_level", "comp_level")
+        .values(
+            "health_comp_level__code",
+            "life_comp_level__code",
+            "comp_level__code",
+        )
         .first()
     )
+    if not row:
+        return {"health": None, "life": None}
+    health = row["health_comp_level__code"] or row["comp_level__code"]
+    life = row["life_comp_level__code"]
+    return {"health": health, "life": life}
+
+
+def agent_comp_level_code(agent_id) -> str | None:
+    """Legacy: health (or old single) level code."""
+    return agent_comp_level_codes(agent_id).get("health")
 
 
 def first_sale_at(agent_id) -> datetime | None:
@@ -497,14 +528,18 @@ def agent_milestones_payload(agent_id) -> dict[str, Any]:
     }
 
 
-def list_comp_levels_payload() -> list[dict]:
+def list_comp_levels_payload(track: str | None = None) -> list[dict]:
+    qs = CompLevel.objects.order_by("track", "sort_order", "name")
+    if track in ("health", "life"):
+        qs = qs.filter(track=track)
     return [
         {
             "id": str(lv.id),
             "code": lv.code,
             "name": lv.name,
+            "track": lv.track,
             "sort_order": lv.sort_order,
             "is_active": lv.is_active,
         }
-        for lv in CompLevel.objects.order_by("sort_order", "name")
+        for lv in qs
     ]

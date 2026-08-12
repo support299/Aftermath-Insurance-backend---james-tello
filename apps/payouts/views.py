@@ -14,6 +14,7 @@ from apps.payouts.models import (
 )
 from apps.payouts.services import (
     agent_comp_level_code,
+    agent_comp_level_codes,
     agent_income_goal_payload,
     agent_milestones_payload,
     agent_tracker_payload,
@@ -74,7 +75,10 @@ class CompLevelsListView(APIView):
 
     def get(self, request):
         active_only = request.query_params.get("all") != "1"
-        qs = CompLevel.objects.order_by("sort_order", "name")
+        track = request.query_params.get("track")
+        qs = CompLevel.objects.order_by("track", "sort_order", "name")
+        if track in ("health", "life"):
+            qs = qs.filter(track=track)
         if active_only:
             qs = qs.filter(is_active=True)
         if not is_admin(request.user) and request.query_params.get("all") == "1":
@@ -86,6 +90,7 @@ class CompLevelsListView(APIView):
                         "id": str(lv.id),
                         "code": lv.code,
                         "name": lv.name,
+                        "track": lv.track,
                         "sort_order": lv.sort_order,
                         "is_active": lv.is_active,
                     }
@@ -96,22 +101,38 @@ class CompLevelsListView(APIView):
 
 
 class MyCompLevelView(APIView):
-    """Own comp level only — never leaks other agents' levels."""
+    """Own comp levels only — never leaks other agents' levels."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         profile = (
-            Profile.objects.select_related("comp_level")
+            Profile.objects.select_related(
+                "comp_level", "health_comp_level", "life_comp_level"
+            )
             .filter(pk=request.user.id)
             .first()
         )
-        lv = profile.comp_level if profile else None
+        health = profile.health_comp_level if profile else None
+        life = profile.life_comp_level if profile else None
+        legacy = profile.comp_level if profile else None
+        if not health and legacy:
+            health = legacy
         return Response(
             {
-                "comp_level_id": str(lv.id) if lv else None,
-                "code": lv.code if lv else None,
-                "name": lv.name if lv else None,
+                "comp_level_id": str(health.id) if health else None,
+                "code": health.code if health else None,
+                "name": health.name if health else None,
+                "health": {
+                    "comp_level_id": str(health.id) if health else None,
+                    "code": health.code if health else None,
+                    "name": health.name if health else None,
+                },
+                "life": {
+                    "comp_level_id": str(life.id) if life else None,
+                    "code": life.code if life else None,
+                    "name": life.name if life else None,
+                },
             }
         )
 
@@ -128,11 +149,23 @@ class EstimatePayoutView(APIView):
         if not _can_view_agent(request.user, agent_id):
             return Response({"detail": "Forbidden."}, status=403)
 
-        level_code = request.data.get("level_code")
-        if not level_code:
-            level_code = agent_comp_level_code(agent_id)
+        codes = agent_comp_level_codes(agent_id)
+        health_code = request.data.get("health_level_code") or codes.get("health")
+        life_code = request.data.get("life_level_code") or codes.get("life")
+        # Legacy single level_code overrides both if provided alone
+        if request.data.get("level_code") and not (
+            request.data.get("health_level_code") or request.data.get("life_level_code")
+        ):
+            health_code = request.data.get("level_code")
+            life_code = request.data.get("level_code")
 
-        return Response(estimate_line_items_payout(line_items, level_code))
+        return Response(
+            estimate_line_items_payout(
+                line_items,
+                health_level_code=health_code,
+                life_level_code=life_code,
+            )
+        )
 
 
 class AgentTrackerView(APIView):
@@ -203,6 +236,10 @@ class AgentOnboardingDashboardView(APIView):
                 "milestones": agent_milestones_payload(target),
                 "comp_level": {
                     "code": agent_comp_level_code(target),
+                    **{
+                        k: {"code": v}
+                        for k, v in agent_comp_level_codes(target).items()
+                    },
                 },
             }
         )
@@ -218,11 +255,13 @@ class CommissionsCatalogView(APIView):
             "product", "product__carrier", "add_on"
         )
         levels = list_comp_levels_payload()
-        my_code = agent_comp_level_code(request.user.id)
+        codes = agent_comp_level_codes(request.user.id)
         return Response(
             {
                 "levels": [lv for lv in levels if lv["is_active"]],
-                "my_level_code": my_code,
+                "my_level_code": codes.get("health"),
+                "my_health_level_code": codes.get("health"),
+                "my_life_level_code": codes.get("life"),
                 "commissions": [_commission_payload(r) for r in rows],
             }
         )
@@ -237,24 +276,31 @@ class AdminCompLevelsView(AdminRequiredMixin, APIView):
     def get(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
-        return Response({"levels": list_comp_levels_payload()})
+        track = request.query_params.get("track")
+        return Response({"levels": list_comp_levels_payload(track=track)})
 
     def post(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
         code = (request.data.get("code") or "").strip().upper().replace(" ", "_")
         name = (request.data.get("name") or "").strip()
+        track = (request.data.get("track") or "health").strip().lower()
+        if track not in ("health", "life"):
+            return Response({"detail": "track must be health or life."}, status=400)
         if not code or not name:
             return Response({"detail": "code and name required."}, status=400)
-        if CompLevel.objects.filter(code__iexact=code).exists():
-            return Response({"detail": "Code already exists."}, status=400)
+        if CompLevel.objects.filter(track=track, code__iexact=code).exists():
+            return Response({"detail": "Code already exists for this track."}, status=400)
         sort_order = int(request.data.get("sort_order") or 0)
-        lv = CompLevel.objects.create(code=code, name=name, sort_order=sort_order)
+        lv = CompLevel.objects.create(
+            code=code, name=name, track=track, sort_order=sort_order
+        )
         return Response(
             {
                 "id": str(lv.id),
                 "code": lv.code,
                 "name": lv.name,
+                "track": lv.track,
                 "sort_order": lv.sort_order,
                 "is_active": lv.is_active,
             },
@@ -284,6 +330,7 @@ class AdminCompLevelDetailView(AdminRequiredMixin, APIView):
                 "id": str(lv.id),
                 "code": lv.code,
                 "name": lv.name,
+                "track": lv.track,
                 "sort_order": lv.sort_order,
                 "is_active": lv.is_active,
             }
@@ -394,18 +441,80 @@ class AdminSetAgentCompLevelView(AdminRequiredMixin, APIView):
         except Profile.DoesNotExist:
             return Response({"detail": "Profile not found."}, status=404)
 
+        update_fields = ["updated_at"]
+
+        # New dual-level API
+        if "health_comp_level_id" in request.data or "life_comp_level_id" in request.data:
+            if "health_comp_level_id" in request.data:
+                hid = request.data.get("health_comp_level_id")
+                if hid in ("", None):
+                    profile.health_comp_level = None
+                    profile.comp_level = None
+                else:
+                    try:
+                        lv = CompLevel.objects.get(pk=hid, track="health")
+                    except CompLevel.DoesNotExist:
+                        return Response(
+                            {"detail": "Health comp level not found."}, status=404
+                        )
+                    profile.health_comp_level = lv
+                    profile.comp_level = lv  # legacy sync
+                update_fields += ["health_comp_level", "comp_level"]
+
+            if "life_comp_level_id" in request.data:
+                lid = request.data.get("life_comp_level_id")
+                if lid in ("", None):
+                    profile.life_comp_level = None
+                else:
+                    try:
+                        lv = CompLevel.objects.get(pk=lid, track="life")
+                    except CompLevel.DoesNotExist:
+                        return Response(
+                            {"detail": "Life comp level not found."}, status=404
+                        )
+                    profile.life_comp_level = lv
+                update_fields.append("life_comp_level")
+
+            profile.save(update_fields=list(dict.fromkeys(update_fields)))
+            health = profile.health_comp_level
+            life = profile.life_comp_level
+            return Response(
+                {
+                    "health_comp_level_id": str(health.id) if health else None,
+                    "health_code": health.code if health else None,
+                    "life_comp_level_id": str(life.id) if life else None,
+                    "life_code": life.code if life else None,
+                    # legacy
+                    "comp_level_id": str(health.id) if health else None,
+                    "code": health.code if health else None,
+                    "name": health.name if health else None,
+                }
+            )
+
+        # Legacy single-level API → health track
         level_id = request.data.get("comp_level_id")
         if level_id in ("", None):
             profile.comp_level = None
-            profile.save(update_fields=["comp_level", "updated_at"])
+            profile.health_comp_level = None
+            profile.save(update_fields=["comp_level", "health_comp_level", "updated_at"])
             return Response({"comp_level_id": None, "code": None, "name": None})
 
         try:
             lv = CompLevel.objects.get(pk=level_id)
         except CompLevel.DoesNotExist:
             return Response({"detail": "Comp level not found."}, status=404)
+        if lv.track != "health":
+            # Allow assigning a health-equivalent by code if a life id was sent by mistake
+            health = CompLevel.objects.filter(track="health", code=lv.code).first()
+            if not health:
+                return Response(
+                    {"detail": "Use a health-track level for legacy comp_level_id."},
+                    status=400,
+                )
+            lv = health
         profile.comp_level = lv
-        profile.save(update_fields=["comp_level", "updated_at"])
+        profile.health_comp_level = lv
+        profile.save(update_fields=["comp_level", "health_comp_level", "updated_at"])
         return Response(
             {"comp_level_id": str(lv.id), "code": lv.code, "name": lv.name}
         )
@@ -557,8 +666,12 @@ class RecalcSalePayoutView(APIView):
         if not _can_view_agent(request.user, sale.agent_id):
             return Response({"detail": "Forbidden."}, status=403)
 
-        level_code = agent_comp_level_code(sale.agent_id)
-        result = estimate_line_items_payout(sale.line_items or [], level_code)
+        codes = agent_comp_level_codes(sale.agent_id)
+        result = estimate_line_items_payout(
+            sale.line_items or [],
+            health_level_code=codes.get("health"),
+            life_level_code=codes.get("life"),
+        )
         sale.estimated_payout = result["estimated_payout"]
         sale.save(update_fields=["estimated_payout"])
 
