@@ -547,7 +547,7 @@ class AdminTrackerConfigView(AdminRequiredMixin, APIView):
         if "phase_goal" in request.data:
             cfg.phase_goal = request.data["phase_goal"] or 250000
         if "blended_income_rate" in request.data:
-            cfg.blended_income_rate = request.data["blended_income_rate"] or 0.15
+            cfg.blended_income_rate = request.data["blended_income_rate"] or 0.18
         cfg.save()
         return self.get(request)
 

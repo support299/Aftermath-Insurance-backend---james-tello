@@ -415,32 +415,34 @@ def agent_income_goal_payload(agent_id) -> dict[str, Any]:
     cfg = TrackerConfig.load()
     goal_row = AgentIncomeGoal.objects.filter(pk=agent_id).first()
     goal = float(goal_row.annual_income_goal) if goal_row else 0.0
-    rate = float(cfg.blended_income_rate) or 0.15
+    rate = float(cfg.blended_income_rate) or 0.18
+    rate_d = Decimal(str(rate))
     business_needed = (goal / rate) if goal and rate else 0.0
 
-    submitted = (
-        Sale.objects.filter(agent_id=agent_id, reporting_only=False).aggregate(
-            t=Sum("deal_size")
-        )["t"]
-        or ZERO
-    )
-    expected_income = float(_d(submitted) * Decimal(str(rate)))
-    pct = min(100.0, expected_income / goal * 100) if goal else 0.0
+    sales = Sale.objects.filter(agent_id=agent_id, reporting_only=False)
+    submitted = sales.aggregate(t=Sum("deal_size"))["t"] or ZERO
 
-    payout_total = (
-        Sale.objects.filter(agent_id=agent_id, reporting_only=False)
-        .exclude(estimated_payout__isnull=True)
-        .aggregate(t=Sum("estimated_payout"))["t"]
-        or ZERO
-    )
+    with_payout = sales.filter(estimated_payout__gt=0)
+    payout_total = with_payout.aggregate(t=Sum("estimated_payout"))["t"] or ZERO
+    ap_with_payout = with_payout.aggregate(t=Sum("deal_size"))["t"] or ZERO
+    ap_fallback = _d(submitted) - _d(ap_with_payout)
+    if ap_fallback < ZERO:
+        ap_fallback = ZERO
+
+    expected_from_commission = _d(payout_total)
+    expected_from_fallback = (ap_fallback * rate_d).quantize(Decimal("0.01"))
+    expected_income = expected_from_commission + expected_from_fallback
+    pct = min(100.0, float(expected_income) / goal * 100) if goal else 0.0
 
     return {
         "annual_income_goal": goal,
         "blended_rate": rate,
         "business_needed": round(business_needed, 2),
         "submitted_ytd": float(_d(submitted)),
-        "expected_income_blended": round(expected_income, 2),
-        "estimated_payout_ytd": float(_d(payout_total)),
+        "expected_income_blended": round(float(expected_income), 2),
+        "expected_from_commission": round(float(expected_from_commission), 2),
+        "expected_from_fallback": round(float(expected_from_fallback), 2),
+        "estimated_payout_ytd": float(expected_from_commission),
         "progress_pct": round(pct, 1),
     }
 

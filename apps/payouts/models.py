@@ -111,8 +111,8 @@ class TrackerConfig(models.Model):
     blended_income_rate = models.DecimalField(
         max_digits=6,
         decimal_places=4,
-        default=Decimal("0.15"),
-        help_text="Used for income-goal → business-needed estimate.",
+        default=Decimal("0.18"),
+        help_text="Fallback income rate when a sale has no posted commission. $9k per $50k AP = 0.18.",
     )
     updated_at = models.DateTimeField(auto_now=True)
 
