@@ -141,16 +141,18 @@ class AgentIncomeGoal(models.Model):
 
 
 class OnboardingMilestone(models.Model):
-    """Cash / badge milestones for an agent's first ~13 weeks / 3 months."""
+    """Cash-match incentives (product sale or submitted-AP benchmarks)."""
 
     TYPE_FIRST_SALE = "first_sale"
     TYPE_SALE_COUNT = "sale_count"
     TYPE_SUBMITTED_AP = "submitted_ap"
+    TYPE_PRODUCT_SALE = "product_sale"
 
     TYPE_CHOICES = [
         (TYPE_FIRST_SALE, "First sale"),
         (TYPE_SALE_COUNT, "Nth sale"),
         (TYPE_SUBMITTED_AP, "Submitted annual premium"),
+        (TYPE_PRODUCT_SALE, "Product / carrier match"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -163,6 +165,12 @@ class OnboardingMilestone(models.Model):
         decimal_places=2,
         default=Decimal("1"),
         help_text="Sale count or AP dollars depending on type.",
+    )
+    match_value = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="For product_sale: match this text in product or carrier name (e.g. FNB).",
     )
     cash_reward = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
     sort_order = models.PositiveSmallIntegerField(default=0)

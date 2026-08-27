@@ -552,64 +552,68 @@ class AdminTrackerConfigView(AdminRequiredMixin, APIView):
         return self.get(request)
 
 
+def _milestone_payload(m: OnboardingMilestone) -> dict:
+    return {
+        "id": str(m.id),
+        "slug": m.slug,
+        "name": m.name,
+        "description": m.description,
+        "milestone_type": m.milestone_type,
+        "threshold": float(m.threshold),
+        "match_value": m.match_value or "",
+        "cash_reward": float(m.cash_reward),
+        "sort_order": m.sort_order,
+        "is_active": m.is_active,
+    }
+
+
+def _unique_milestone_slug(base: str) -> str:
+    slug = (base or "").strip().lower().replace(" ", "-")
+    slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in slug).strip("-")
+    slug = slug or "incentive"
+    candidate = slug[:64]
+    n = 2
+    while OnboardingMilestone.objects.filter(slug=candidate).exists():
+        suffix = f"-{n}"
+        candidate = f"{slug[: 64 - len(suffix)]}{suffix}"
+        n += 1
+    return candidate
+
+
 class AdminMilestonesView(AdminRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
-        rows = OnboardingMilestone.objects.order_by("sort_order", "name")
-        return Response(
-            {
-                "milestones": [
-                    {
-                        "id": str(m.id),
-                        "slug": m.slug,
-                        "name": m.name,
-                        "description": m.description,
-                        "milestone_type": m.milestone_type,
-                        "threshold": float(m.threshold),
-                        "cash_reward": float(m.cash_reward),
-                        "sort_order": m.sort_order,
-                        "is_active": m.is_active,
-                    }
-                    for m in rows
-                ]
-            }
-        )
+        rows = OnboardingMilestone.objects.order_by("-is_active", "sort_order", "name")
+        return Response({"milestones": [_milestone_payload(m) for m in rows]})
 
     def post(self, request):
         if denied := self.deny_unless_admin(request):
             return denied
-        slug = (request.data.get("slug") or "").strip().lower().replace(" ", "-")
         name = (request.data.get("name") or "").strip()
-        mtype = request.data.get("milestone_type") or OnboardingMilestone.TYPE_SALE_COUNT
-        if not slug or not name:
-            return Response({"detail": "slug and name required."}, status=400)
+        if not name:
+            return Response({"detail": "name required."}, status=400)
+        mtype = request.data.get("milestone_type") or OnboardingMilestone.TYPE_SUBMITTED_AP
+        valid = {c[0] for c in OnboardingMilestone.TYPE_CHOICES}
+        if mtype not in valid:
+            return Response({"detail": "Invalid milestone_type."}, status=400)
+        max_sort = OnboardingMilestone.objects.order_by("-sort_order").values_list(
+            "sort_order", flat=True
+        ).first() or 0
         m = OnboardingMilestone.objects.create(
-            slug=slug,
+            slug=_unique_milestone_slug(request.data.get("slug") or name),
             name=name,
             description=(request.data.get("description") or "").strip(),
             milestone_type=mtype,
             threshold=request.data.get("threshold") or 1,
+            match_value=(request.data.get("match_value") or "").strip(),
             cash_reward=request.data.get("cash_reward") or 0,
-            sort_order=int(request.data.get("sort_order") or 0),
+            sort_order=int(request.data.get("sort_order") or (max_sort + 1)),
             is_active=bool(request.data.get("is_active", True)),
         )
-        return Response(
-            {
-                "id": str(m.id),
-                "slug": m.slug,
-                "name": m.name,
-                "description": m.description,
-                "milestone_type": m.milestone_type,
-                "threshold": float(m.threshold),
-                "cash_reward": float(m.cash_reward),
-                "sort_order": m.sort_order,
-                "is_active": m.is_active,
-            },
-            status=201,
-        )
+        return Response(_milestone_payload(m), status=201)
 
 
 class AdminMilestoneDetailView(AdminRequiredMixin, APIView):
@@ -622,9 +626,9 @@ class AdminMilestoneDetailView(AdminRequiredMixin, APIView):
             m = OnboardingMilestone.objects.get(pk=milestone_id)
         except OnboardingMilestone.DoesNotExist:
             return Response({"detail": "Not found."}, status=404)
-        for field in ("name", "description", "milestone_type"):
+        for field in ("name", "description", "milestone_type", "match_value"):
             if field in request.data:
-                setattr(m, field, request.data[field])
+                setattr(m, field, request.data[field] if field != "match_value" else (request.data[field] or "").strip())
         if "threshold" in request.data:
             m.threshold = request.data["threshold"]
         if "cash_reward" in request.data:
@@ -634,19 +638,17 @@ class AdminMilestoneDetailView(AdminRequiredMixin, APIView):
         if "is_active" in request.data:
             m.is_active = bool(request.data["is_active"])
         m.save()
-        return Response(
-            {
-                "id": str(m.id),
-                "slug": m.slug,
-                "name": m.name,
-                "description": m.description,
-                "milestone_type": m.milestone_type,
-                "threshold": float(m.threshold),
-                "cash_reward": float(m.cash_reward),
-                "sort_order": m.sort_order,
-                "is_active": m.is_active,
-            }
-        )
+        return Response(_milestone_payload(m))
+
+    def delete(self, request, milestone_id):
+        if denied := self.deny_unless_admin(request):
+            return denied
+        try:
+            m = OnboardingMilestone.objects.get(pk=milestone_id)
+        except OnboardingMilestone.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+        m.delete()
+        return Response(status=204)
 
 
 class RecalcSalePayoutView(APIView):

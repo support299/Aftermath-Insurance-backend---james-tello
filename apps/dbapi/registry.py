@@ -17,6 +17,7 @@ from apps.dbapi.roles import (
     is_admin,
     is_manager,
     managed_team_ids,
+    visible_ghl_user_ids,
 )
 from apps.expenses.models import CpaEntry, Expense
 from apps.ghl.models import GhlContact, GhlUser
@@ -240,13 +241,30 @@ def targets_select(user):
     return q
 
 
-# ghl_users_select_own: app_user_id = auth.uid() OR admin
+# ghl_users_select: admin = all; manager = own + team; else own
 def ghl_users_select(user):
     if not user.is_authenticated:
         return DENY
     if is_admin(user):
         return None
-    return Q(app_user_id=user.pk)
+    q = Q(app_user_id=user.pk)
+    if is_manager(user):
+        managed = managed_team_ids(user)
+        if managed:
+            q |= Q(app_user__profile__team_id__in=managed)
+    return q
+
+
+# ghl_contacts_select: admin = all; manager = team (and own); agent = own
+def ghl_contacts_select(user):
+    if not user.is_authenticated:
+        return DENY
+    if is_admin(user):
+        return None
+    ghl_ids = visible_ghl_user_ids(user)
+    if not ghl_ids:
+        return Q(pk__in=[])
+    return Q(user_id__in=ghl_ids)
 
 
 # --- registry ---------------------------------------------------------------
@@ -515,7 +533,7 @@ TABLES: dict[str, TableConfig] = {
             "updated_at": "updated_at",
         },
         policy=Policy(
-            select=authenticated_only,
+            select=ghl_contacts_select,
             insert=admin_write,
             update=lambda user: None if is_admin(user) else DENY,
             delete=lambda user: None if is_admin(user) else DENY,

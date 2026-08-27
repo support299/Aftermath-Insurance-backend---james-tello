@@ -57,3 +57,28 @@ def current_ghl_user_ids(user) -> list[str]:
     if not user or not user.is_authenticated:
         return []
     return list(GhlUser.objects.filter(app_user=user).values_list("id", flat=True))
+
+
+def visible_ghl_user_ids(user) -> list[str]:
+    """GHL user ids whose assigned contacts this user may see (non-admin).
+
+    Agents: own linked GHL user(s). Managers: own plus GHL users linked to
+    agents on teams they manage.
+    """
+    from apps.ghl.models import GhlUser
+
+    if not user or not user.is_authenticated:
+        return []
+    if hasattr(user, "_cached_visible_ghl_user_ids"):
+        return user._cached_visible_ghl_user_ids
+    ids = set(current_ghl_user_ids(user))
+    if is_manager(user):
+        managed = managed_team_ids(user)
+        if managed:
+            ids.update(
+                GhlUser.objects.filter(app_user__profile__team_id__in=managed).values_list(
+                    "id", flat=True
+                )
+            )
+    user._cached_visible_ghl_user_ids = list(ids)
+    return user._cached_visible_ghl_user_ids

@@ -447,6 +447,21 @@ def agent_income_goal_payload(agent_id) -> dict[str, Any]:
     }
 
 
+def _product_match_count(sales: list[Sale], keyword: str) -> int:
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return len(sales)
+    n = 0
+    for s in sales:
+        parts = [s.product or "", s.carrier or ""]
+        for item in s.line_items or []:
+            parts.append(str(item.get("product") or ""))
+            parts.append(str(item.get("carrier") or ""))
+        if kw in " ".join(parts).lower():
+            n += 1
+    return n
+
+
 def evaluate_milestones_for_agent(agent_id, *, triggering_sale: Sale | None = None) -> list[dict]:
     """Award any newly unlocked onboarding milestones. Returns newly awarded."""
     milestones = list(OnboardingMilestone.objects.filter(is_active=True).order_by("sort_order"))
@@ -475,6 +490,8 @@ def evaluate_milestones_for_agent(agent_id, *, triggering_sale: Sale | None = No
             unlocked = True
         elif m.milestone_type == OnboardingMilestone.TYPE_SUBMITTED_AP and submitted >= m.threshold:
             unlocked = True
+        elif m.milestone_type == OnboardingMilestone.TYPE_PRODUCT_SALE:
+            unlocked = _product_match_count(sales, m.match_value) >= int(m.threshold)
 
         if unlocked:
             award = AgentMilestoneAward.objects.create(

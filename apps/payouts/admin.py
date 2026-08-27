@@ -34,7 +34,7 @@ class AgentIncomeGoalAdmin(admin.ModelAdmin):
 
 @admin.register(OnboardingMilestone)
 class OnboardingMilestoneAdmin(admin.ModelAdmin):
-    list_display = ("slug", "name", "milestone_type", "threshold", "cash_reward", "is_active")
+    list_display = ("slug", "name", "milestone_type", "threshold", "match_value", "cash_reward", "is_active")
 
 
 @admin.register(AgentMilestoneAward)
