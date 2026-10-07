@@ -171,6 +171,10 @@ GHL_CLIENT_SECRET = config("GHL_CLIENT_SECRET", default="")
 GHL_LOCATION_ID = config("GHL_LOCATION_ID", default="32Xlzcg72vsKh62gCqEz")
 GHL_REDIRECT_URI = config("GHL_REDIRECT_URI", default="http://localhost:5173/connect/callback")
 GHL_VERSION_ID = config("GHL_VERSION_ID", default="69fe0a4d9cd6a4f8e8fb4d15")
+# Academy onboarding receives team membership. Blank disables the push.
+ACADEMY_SYNC_URL = config("ACADEMY_SYNC_URL", default="")
+ACADEMY_SYNC_TOKEN = config("ACADEMY_SYNC_TOKEN", default="")
+
 GHL_SCOPES = config(
     "GHL_SCOPES",
     default=(
